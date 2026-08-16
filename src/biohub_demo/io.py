@@ -6,8 +6,11 @@ import csv
 import hashlib
 import json
 import platform
+import shutil
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -92,13 +95,53 @@ def read_graph_json(path: str | Path) -> TrackGraph:
     return graph
 
 
-def write_geff(graph: TrackGraph, path: str | Path) -> Path:
-    """Write the required per-dataset GEFF artifact via tracksdata."""
+def is_complete_geff(path: str | Path) -> bool:
+    """Return true only after GEFF's final root metadata has been published."""
+    output = Path(path)
+    try:
+        metadata = json.loads((output / "zarr.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    geff = metadata.get("attributes", {}).get("geff")
+    return output.is_dir() and isinstance(geff, dict) and bool(geff.get("geff_version"))
+
+
+def _discard_staging(path: Path) -> None:
+    """Best-effort cleanup for a uniquely named directory created by this process."""
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _replace_with_retry(source: Path, destination: Path, attempts: int = 5) -> None:
+    last_error: PermissionError | None = None
+    for attempt in range(attempts):
+        try:
+            source.replace(destination)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            time.sleep(0.2 * (2 ** attempt))
+    assert last_error is not None
+    raise last_error
+
+
+def write_geff(graph: TrackGraph, path: str | Path, attempts: int = 5) -> Path:
+    """Write GEFF to staging, validate it, then atomically publish the directory.
+
+    Zarr updates ``zarr.json`` through an atomic file replacement.  Windows can
+    transiently reject that replacement when another process (commonly a file
+    indexer or antivirus scanner) has the metadata open.  A failed direct write
+    also leaves a directory that merely checking ``Path.exists`` would mistake
+    for a completed artifact.  Unique staging directories plus a final metadata
+    marker make interrupted method searches safely resumable.
+    """
     import polars as pl
     import tracksdata as td
 
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
+    if is_complete_geff(output):
+        return output
     target = td.graph.InMemoryGraph()
     for key in ("z", "y", "x"):
         target.add_node_attr_key(key, pl.Float64, -999999.0)
@@ -117,7 +160,44 @@ def write_geff(graph: TrackGraph, path: str | Path) -> Path:
             }
             for edge in graph.edges.values()
         ])
-    target.to_geff(output)
+    staging: Path | None = None
+    last_error: PermissionError | None = None
+    for attempt in range(attempts):
+        staging = output.with_name(
+            f".{output.name}.{uuid.uuid4().hex}.partial"
+        )
+        try:
+            target.to_geff(staging)
+            if not is_complete_geff(staging):
+                raise RuntimeError(f"GEFF write completed without final metadata: {staging}")
+            break
+        except PermissionError as exc:
+            last_error = exc
+            _discard_staging(staging)
+            staging = None
+            if attempt + 1 < attempts:
+                time.sleep(0.2 * (2 ** attempt))
+    if staging is None:
+        assert last_error is not None
+        raise last_error
+
+    # Preserve an interrupted artifact for diagnosis instead of deleting it.
+    if output.exists():
+        if is_complete_geff(output):
+            _discard_staging(staging)
+            return output
+        quarantine = output.with_name(
+            f"{output.name}.incomplete-{uuid.uuid4().hex[:12]}"
+        )
+        _replace_with_retry(output, quarantine, attempts=attempts)
+
+    try:
+        _replace_with_retry(staging, output, attempts=attempts)
+    except Exception:
+        # Keep the complete staging artifact so it can be inspected or recovered.
+        raise
+    if not is_complete_geff(output):
+        raise RuntimeError(f"published GEFF failed completion validation: {output}")
     return output
 
 

@@ -38,6 +38,24 @@ early stopping中に表示されるaccuracy/recallは停止判定の補助値に
 結果は `outputs/method_search/method_search_results.json`、最良方式だけは
 `outputs/method_search/best_method.json` で確認できます。途中停止後も学習checkpointとraw candidateを再利用します。
 
+## GPU対応OT後処理比較
+
+[OPTIMAL_TRANSPORT_MATCHING_PROPOSAL.md](OPTIMAL_TRANSPORT_MATCHING_PROPOSAL.md) の
+4方式 `uot_distance`、`uot_hybrid`、`uot_hybrid_division`、
+`uot_consensus_ilp` は既存6方式と同じraw prediction・同じ20系列holdoutで比較します。
+学習済みcheckpointとraw cacheを再利用し、再学習せず実行するコマンドは次です。
+
+```powershell
+.\scripts\run_local_ot_postprocess_search.ps1 -DryRun
+.\scripts\run_local_ot_postprocess_search.ps1
+```
+
+`ot_device: auto` はCUDAが利用可能なら、物理距離行列、candidate gating、
+cost構築、log-domain Unbalanced Sinkhorn、threshold/top-k抽出をGPUで実行します。
+Hungarian/ILP、グラフ整形、GEFF書込み、公式metric評価はCPU処理です。
+各系列で実際に使ったdeviceとSinkhorn時間はvariant JSONの
+`diagnostics.<dataset>.ot_device`、`gpu_accelerated`、`tensor_seconds`で確認できます。
+
 既存checkpointだけでtracking方式を先に比較する場合は、学習を省略できます。
 
 ```powershell

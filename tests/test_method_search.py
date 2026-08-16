@@ -15,8 +15,10 @@ def test_method_search_uses_all_non_holdout_data_and_shared_inference() -> None:
     assert plan["training_datasets"] == 179
     assert plan["validation_datasets"] == 20
     assert plan["max_frames_per_dataset"] is None
+    assert plan["max_training_batches_per_epoch"] == 256
+    assert plan["max_validation_batches_per_epoch"] == 128
     assert plan["shared_raw_inference_passes"] == 20
-    assert plan["official_metric_ranked_variants"] == 6
+    assert plan["official_metric_ranked_variants"] == 10
     assert plan["uses_all_available_training_sequences_except_holdout"] is True
 
 

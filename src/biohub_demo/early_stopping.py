@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,6 +13,20 @@ import torch
 
 class _StopTraining(RuntimeError):
     pass
+
+
+class _LimitedLoader:
+    """Expose only the first N batches of a loader for cheap epoch monitoring."""
+
+    def __init__(self, loader: Any, limit: int) -> None:
+        self.loader = loader
+        self.limit = limit
+
+    def __iter__(self):
+        return islice(iter(self.loader), self.limit)
+
+    def __len__(self) -> int:
+        return min(len(self.loader), self.limit)
 
 
 @dataclass
@@ -31,6 +46,7 @@ def train_with_early_stopping(
     patience: int,
     min_delta: float,
     train_kwargs: dict[str, Any],
+    max_validation_iters: int | None = None,
 ) -> EarlyStoppingResult:
     """Call the official trainer and stop before a clearly unproductive epoch.
 
@@ -39,7 +55,12 @@ def train_with_early_stopping(
     The stopping monitor is validation loss; model-method ranking remains the
     exact Kaggle competition score after full held-out graph inference.
     """
-    if min_epochs < 1 or patience < 1 or min_delta < 0:
+    if (
+        min_epochs < 1
+        or patience < 1
+        or min_delta < 0
+        or (max_validation_iters is not None and max_validation_iters < 1)
+    ):
         raise ValueError("invalid early-stopping settings")
 
     original_evaluate: Callable = train_module.evaluate
@@ -52,7 +73,12 @@ def train_with_early_stopping(
     }
 
     def evaluate(model: torch.nn.Module, *args: Any, **kwargs: Any):
-        values = original_evaluate(model, *args, **kwargs)
+        evaluate_args = args
+        if max_validation_iters is not None:
+            if not args:
+                raise ValueError("validation loader is missing")
+            evaluate_args = (_LimitedLoader(args[0], max_validation_iters), *args[1:])
+        values = original_evaluate(model, *evaluate_args, **kwargs)
         validation_loss, accuracy, node_recall = map(float, values)
         epoch = len(state["history"])
         improved = validation_loss < state["best_loss"] - min_delta

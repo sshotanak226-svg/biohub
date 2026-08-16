@@ -10,6 +10,7 @@ from scipy.optimize import linear_sum_assignment
 
 from .candidates import Candidate
 from .graph import Edge, Node, TrackGraph, physical_distance
+from .optimal_transport import solve_ot_tracking
 from .optimizer import solve_forest
 from .postprocess import add_safe_divisions, smooth_non_branching
 
@@ -199,16 +200,34 @@ def build_variant(
 ) -> tuple[TrackGraph, dict[str, Any]]:
     """Build one deliberately coarse method combination from shared raw inference."""
     tracker = str(settings["tracker"])
-    graph, candidates = _candidate_subset(
-        raw_graph,
-        raw_candidates,
-        detection_threshold=float(settings["detection_threshold"]),
-        edge_threshold=float(settings.get("edge_threshold", 0.01)),
-        strong_edge_threshold=float(settings.get("strong_edge_threshold", 0.30)),
-        top_k_parents=int(settings.get("top_k_parents", 3)),
-        max_distance_um=float(settings.get("max_distance_um", 10.0)),
-        distance_only=tracker == "distance_hungarian",
-    )
+    solver_diagnostic: dict[str, Any] = {}
+    if tracker == "unbalanced_ot":
+        selected_nodes = {
+            node_id: node for node_id, node in raw_graph.nodes.items()
+            if node.confidence >= float(settings["detection_threshold"])
+        }
+        graph = TrackGraph(raw_graph.dataset, selected_nodes, {})
+        candidates = [
+            item for item in raw_candidates
+            if item.source_id in selected_nodes
+            and item.target_id in selected_nodes
+            and item.distance_um <= float(settings.get("max_distance_um", 10.0))
+        ]
+        result, candidates, solver_diagnostic = solve_ot_tracking(
+            graph, candidates, settings, (1.625, 0.40625, 0.40625)
+        )
+        solver = f"unbalanced-ot:{settings.get('ot_mode', 'hybrid')}"
+    else:
+        graph, candidates = _candidate_subset(
+            raw_graph,
+            raw_candidates,
+            detection_threshold=float(settings["detection_threshold"]),
+            edge_threshold=float(settings.get("edge_threshold", 0.01)),
+            strong_edge_threshold=float(settings.get("strong_edge_threshold", 0.30)),
+            top_k_parents=int(settings.get("top_k_parents", 3)),
+            max_distance_um=float(settings.get("max_distance_um", 10.0)),
+            distance_only=tracker == "distance_hungarian",
+        )
     if tracker == "greedy":
         result = _greedy(graph, candidates)
         solver = "greedy-probability"
@@ -232,7 +251,7 @@ def build_variant(
             ),
         )
         solver = tracker
-    else:
+    elif tracker != "unbalanced_ot":
         raise ValueError(f"unknown tracker: {tracker}")
 
     divisions_added = 0
@@ -262,4 +281,5 @@ def build_variant(
         "output_edges": len(result.edges),
         "divisions_added": divisions_added,
         "smoothed_nodes": smoothed,
+        **solver_diagnostic,
     }

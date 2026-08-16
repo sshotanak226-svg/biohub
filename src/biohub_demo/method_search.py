@@ -18,7 +18,7 @@ from .competition_metric import METRIC_CONTRACT_ID, official_metric_contract
 from .data import discover_competition_root
 from .early_stopping import train_with_early_stopping
 from .hyper_search import _signature
-from .io import sha256_file, write_geff, write_json
+from .io import is_complete_geff, sha256_file, write_geff, write_json
 from .tracking_variants import build_variant, graph_from_raw_prediction
 from .train_eval import (
     WORKSPACE,
@@ -45,7 +45,10 @@ def load_method_search_config(path: Path) -> dict[str, Any]:
         not re.fullmatch(r"[A-Za-z0-9_.-]+", name) for name in names
     ):
         raise ValueError("method variant names must be unique filesystem-safe identifiers")
-    allowed = {"greedy", "ilp", "distance_hungarian", "hybrid_hungarian"}
+    allowed = {
+        "greedy", "ilp", "distance_hungarian", "hybrid_hungarian",
+        "unbalanced_ot",
+    }
     unknown = sorted({str(item.get("tracker")) for item in variants} - allowed)
     if unknown:
         raise ValueError(f"unknown trackers: {unknown}")
@@ -58,6 +61,9 @@ def load_method_search_config(path: Path) -> dict[str, Any]:
         raise ValueError("training.min_epochs cannot exceed training.max_epochs")
     if int(training["early_stopping_patience"]) < 1:
         raise ValueError("early_stopping_patience must be positive")
+    for key in ("max_iters_per_epoch", "max_validation_iters"):
+        if training.get(key) is not None and int(training[key]) < 1:
+            raise ValueError(f"training.{key} must be positive or null")
     raw = config["raw_inference"]
     for key in ("detection_threshold", "edge_threshold"):
         if not 0 <= float(raw[key]) <= 1:
@@ -65,6 +71,17 @@ def load_method_search_config(path: Path) -> dict[str, Any]:
     minimum_variant_detection = min(float(item["detection_threshold"]) for item in variants)
     if float(raw["detection_threshold"]) > minimum_variant_detection:
         raise ValueError("raw detection threshold must cover every method variant")
+    for item in variants:
+        if item.get("tracker") != "unbalanced_ot":
+            continue
+        if str(item.get("ot_mode", "hybrid")) not in {
+            "distance", "hybrid", "hybrid_division", "consensus_ilp",
+        }:
+            raise ValueError(f"unknown OT mode: {item.get('ot_mode')}")
+        if int(item.get("sinkhorn_iterations", 100)) < 1:
+            raise ValueError("sinkhorn_iterations must be positive")
+        if float(item.get("entropy_epsilon", 0.05)) <= 0:
+            raise ValueError("entropy_epsilon must be positive")
     return config
 
 
@@ -80,6 +97,8 @@ def build_method_search_plan(config: dict[str, Any], paired_datasets: int) -> di
         "max_training_epochs": int(config["training"]["max_epochs"]),
         "min_training_epochs": int(config["training"]["min_epochs"]),
         "early_stopping_patience": int(config["training"]["early_stopping_patience"]),
+        "max_training_batches_per_epoch": config["training"].get("max_iters_per_epoch"),
+        "max_validation_batches_per_epoch": config["training"].get("max_validation_iters"),
         "shared_raw_inference_passes": validation_count,
         "method_variants": [item["name"] for item in config["method_variants"]],
         "official_metric_ranked_variants": len(config["method_variants"]),
@@ -167,6 +186,7 @@ def _checkpoint_record(
         patience=int(training["early_stopping_patience"]),
         min_delta=float(training.get("early_stopping_min_delta", 1e-4)),
         train_kwargs=train_kwargs,
+        max_validation_iters=training.get("max_validation_iters"),
     )
     record = {
         "status": "complete",
@@ -333,7 +353,8 @@ def execute_method_search(config_path: Path, checkpoint_override: Path | None = 
         if bool(config.get("reuse_completed", True)) and record_path.is_file():
             previous = json.loads(record_path.read_text(encoding="utf-8-sig"))
             complete_files = all(
-                (prediction_dir / f"{name}.geff").exists() for name in split["test"]
+                is_complete_geff(prediction_dir / f"{name}.geff")
+                for name in split["test"]
             )
             if (
                 previous.get("status") == "complete"
@@ -347,17 +368,17 @@ def execute_method_search(config_path: Path, checkpoint_override: Path | None = 
         diagnostics: dict[str, Any] = {}
         started = time.time()
         for name in split["test"]:
+            geff_path = prediction_dir / f"{name}.geff"
+            if is_complete_geff(geff_path):
+                diagnostics[name] = {"reused_complete_geff": True}
+                continue
             coords, scores, edge_array = raw[name]
             raw_edges = [tuple(row) for row in edge_array.tolist()]
             raw_graph, raw_candidates = graph_from_raw_prediction(
                 name, coords, scores, raw_edges, (1.625, 0.40625, 0.40625)
             )
             graph, diagnostic = build_variant(raw_graph, raw_candidates, variant)
-            geff_path = prediction_dir / f"{name}.geff"
-            # A deterministic same-signature artifact from an interrupted run
-            # can be reused without deleting or overwriting user data.
-            if not geff_path.exists():
-                write_geff(graph, geff_path)
+            write_geff(graph, geff_path)
             diagnostics[name] = diagnostic
         metrics = evaluate_prediction_dir(
             modules, prediction_dir, layout.train, expected_datasets=list(split["test"])

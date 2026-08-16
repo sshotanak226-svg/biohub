@@ -17,7 +17,8 @@ training:
   early_stopping_min_delta: 0.0001
   learning_rate: 0.0003
   batch_size: 4
-  num_workers: 2
+  # Windows spawn cannot pickle the official baseline's nested worker_init_fn.
+  num_workers: 0
   window_size: 2
   downsample: [1, 4, 4]
   unet_out_channels: 32
@@ -25,7 +26,12 @@ training:
   pool_kernel_um: 5.0
   detection_loss_weight: 2.0
   detection_negative_weight: 0.01
-  max_iters_per_epoch: null
+  # A full pass is about 4,431 train batches on the current 179/20 split.
+  # Short virtual epochs let early stopping react quickly; every sequence stays
+  # eligible for random sampling, and final official scoring still uses all 20
+  # held-out sequences.
+  max_iters_per_epoch: 256
+  max_validation_iters: 128
   data_parallel: false
 
 # Raw neural inference is shared by every method below. A permissive threshold
@@ -110,6 +116,112 @@ method_variants:
     probability_weight: 4.0
     safe_divisions: true
     division_min_probability: 0.20
+    minimum_track_nodes: 4
+    smoothing_weight: 0.15
+    max_smoothing_shift_um: 1.5
+    linked_nodes_only: true
+
+  # GPU-accelerated OT comparisons from OPTIMAL_TRANSPORT_MATCHING_PROPOSAL.md.
+  # CUDA is used automatically for cdist, cost construction, log-Sinkhorn and
+  # top-k extraction. Hungarian/ILP, graph cleanup and GEFF I/O remain on CPU.
+  - name: uot_distance
+    tracker: unbalanced_ot
+    ot_mode: distance
+    ot_device: auto
+    detection_threshold: 0.95
+    edge_threshold: 0.0
+    max_distance_um: 10.0
+    distance_weight: 1.0
+    detection_weight: 0.25
+    entropy_epsilon: 0.05
+    source_mass_penalty: 0.5
+    target_mass_penalty: 0.5
+    sinkhorn_iterations: 100
+    sinkhorn_tolerance: 0.0001
+    ot_threshold: 0.05
+    top_k_source: 2
+    top_k_target: 3
+    minimum_track_nodes: 4
+    smoothing_weight: 0.15
+    max_smoothing_shift_um: 1.5
+    linked_nodes_only: true
+
+  - name: uot_hybrid
+    tracker: unbalanced_ot
+    ot_mode: hybrid
+    ot_device: auto
+    detection_threshold: 0.95
+    edge_threshold: 0.01
+    max_distance_um: 10.0
+    distance_weight: 1.0
+    transformer_weight: 1.0
+    detection_weight: 0.25
+    entropy_epsilon: 0.05
+    source_mass_penalty: 0.5
+    target_mass_penalty: 0.5
+    sinkhorn_iterations: 100
+    sinkhorn_tolerance: 0.0001
+    ot_threshold: 0.05
+    top_k_source: 2
+    top_k_target: 3
+    minimum_track_nodes: 4
+    smoothing_weight: 0.15
+    max_smoothing_shift_um: 1.5
+    linked_nodes_only: true
+
+  - name: uot_hybrid_division
+    tracker: unbalanced_ot
+    ot_mode: hybrid_division
+    ot_device: auto
+    detection_threshold: 0.95
+    edge_threshold: 0.01
+    max_distance_um: 10.0
+    distance_weight: 1.0
+    transformer_weight: 1.0
+    detection_weight: 0.25
+    entropy_epsilon: 0.05
+    source_mass_penalty: 0.5
+    target_mass_penalty: 0.5
+    sinkhorn_iterations: 100
+    sinkhorn_tolerance: 0.0001
+    ot_threshold: 0.05
+    top_k_source: 3
+    top_k_target: 3
+    safe_divisions: true
+    division_parent_child_um: 7.5
+    division_child_child_um: 8.5
+    division_min_probability: 0.20
+    minimum_track_nodes: 4
+    smoothing_weight: 0.15
+    max_smoothing_shift_um: 1.5
+    linked_nodes_only: true
+
+  - name: uot_consensus_ilp
+    tracker: unbalanced_ot
+    ot_mode: consensus_ilp
+    ot_device: auto
+    detection_threshold: 0.95
+    edge_threshold: 0.01
+    max_distance_um: 10.0
+    distance_weight: 1.0
+    transformer_weight: 1.0
+    detection_weight: 0.25
+    entropy_epsilon: 0.05
+    source_mass_penalty: 0.5
+    target_mass_penalty: 0.5
+    sinkhorn_iterations: 100
+    sinkhorn_tolerance: 0.0001
+    ot_threshold: 0.05
+    top_k_source: 3
+    top_k_target: 3
+    ot_score_weight: 0.55
+    transformer_score_weight: 0.20
+    distance_score_weight: 0.10
+    vote_score_weight: 0.15
+    ilp_edge_weight: -1.0
+    ilp_appearance_weight: 0.1
+    ilp_disappearance_weight: 0.1
+    ilp_division_weight: 1.0
     minimum_track_nodes: 4
     smoothing_weight: 0.15
     max_smoothing_shift_um: 1.5
