@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+.pytest_cache/
+.test-tmp/
+outputs/test-tmp/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.uv-cache/
+
+# Generated experiment artifacts and model weights
+outputs/
+**/weights/
+**/predictions/
+*.pt
+*.pth
+*.ckpt
+
+# Downloaded competition data and interrupted archives must never be pushed
+biohub_top10_download/data/
+biohub_top10_download/
+biohub_cell_tracking_5methods_8gb_kaggle_2026-08-06/
+biohub_kaggle_windows_setup/
+dissction/
+biohub_data_structure_visualization.ipynb
+*.zip
+*.kaggle-partial

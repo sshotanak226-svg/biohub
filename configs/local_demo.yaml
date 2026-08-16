@@ -1,0 +1,32 @@
+seed: 20260809
+mode: real-mini
+output_dir: outputs/local_demo
+data_root: auto
+split: train
+dataset: 44b6_0113de3b
+time_start: 0
+time_frames: 4
+crop_shape: [16, 128, 128]
+point_threshold: 0.96875
+nms_um: 3.0
+edges:
+  strong_threshold: 0.50
+  min_probability: 0.20
+  top_k_parents: 3
+  max_distance_um: 10.0
+ilp:
+  edge_weight: -1.0
+  appearance_weight: 0.0
+  disappearance_weight: 1.4
+  division_weight: 1.0
+gap:
+  max_added_fraction: 0.005
+  max_added_absolute: 180
+  max_link_um: 6.0
+smooth:
+  weight: 0.15
+  max_shift_um: 1.5
+division:
+  parent_child_um: 7.5
+  child_child_um: 8.5
+  min_probability: 0.20

@@ -1,0 +1,116 @@
+seed: 20260809
+data_root: auto
+output_dir: outputs/method_search
+reuse_completed: true
+
+dataset:
+  # 199 paired sequences are available. Twenty remain unseen for honest local
+  # scoring; every other labelled sequence and every frame are used to train.
+  validation_count: 20
+  max_frames: null
+
+training:
+  method: local_method_search_robust
+  max_epochs: 30
+  min_epochs: 8
+  early_stopping_patience: 4
+  early_stopping_min_delta: 0.0001
+  learning_rate: 0.0003
+  batch_size: 4
+  num_workers: 2
+  window_size: 2
+  downsample: [1, 4, 4]
+  unet_out_channels: 32
+  unet_layers: [32, 64, 128]
+  pool_kernel_um: 5.0
+  detection_loss_weight: 2.0
+  detection_negative_weight: 0.01
+  max_iters_per_epoch: null
+  data_parallel: false
+
+# Raw neural inference is shared by every method below. A permissive threshold
+# keeps candidates once; tracker/postprocess variants are then cheap CPU work.
+raw_inference:
+  detection_threshold: 0.90
+  edge_threshold: 0.01
+  pool_kernel_um: 3.0
+  edge_activation: softmax
+  det_tta: true
+  inference_batch_size: 1
+
+# This is intentionally a short list of qualitatively different methods, not a
+# Cartesian hyperparameter grid. Fine tuning starts only after one family wins.
+method_variants:
+  - name: transformer_greedy
+    tracker: greedy
+    detection_threshold: 0.95
+    edge_threshold: 0.03
+    strong_edge_threshold: 0.30
+    top_k_parents: 3
+    max_distance_um: 10.0
+    linked_nodes_only: true
+
+  - name: transformer_ilp
+    tracker: ilp
+    detection_threshold: 0.95
+    edge_threshold: 0.03
+    strong_edge_threshold: 0.30
+    top_k_parents: 3
+    max_distance_um: 10.0
+    ilp_edge_weight: -1.0
+    ilp_appearance_weight: 0.1
+    ilp_disappearance_weight: 0.1
+    ilp_division_weight: 1.0
+    linked_nodes_only: true
+
+  - name: distance_hungarian_top_style
+    tracker: distance_hungarian
+    detection_threshold: 0.95
+    edge_threshold: 0.0
+    strong_edge_threshold: 0.0
+    top_k_parents: 0
+    tight_gate_um: 6.0
+    max_distance_um: 10.0
+    minimum_track_nodes: 1
+    linked_nodes_only: true
+
+  - name: distance_hungarian_filtered
+    tracker: distance_hungarian
+    detection_threshold: 0.95
+    edge_threshold: 0.0
+    strong_edge_threshold: 0.0
+    top_k_parents: 0
+    tight_gate_um: 6.0
+    max_distance_um: 10.0
+    minimum_track_nodes: 4
+    smoothing_weight: 0.15
+    max_smoothing_shift_um: 1.5
+    linked_nodes_only: true
+
+  - name: hybrid_hungarian
+    tracker: hybrid_hungarian
+    detection_threshold: 0.95
+    edge_threshold: 0.03
+    strong_edge_threshold: 0.30
+    top_k_parents: 3
+    tight_gate_um: 6.0
+    max_distance_um: 10.0
+    probability_weight: 4.0
+    minimum_track_nodes: 1
+    linked_nodes_only: true
+
+  - name: hybrid_repair_division
+    tracker: hybrid_hungarian
+    detection_threshold: 0.95
+    edge_threshold: 0.03
+    strong_edge_threshold: 0.30
+    top_k_parents: 3
+    tight_gate_um: 6.0
+    max_distance_um: 10.0
+    probability_weight: 4.0
+    safe_divisions: true
+    division_min_probability: 0.20
+    minimum_track_nodes: 4
+    smoothing_weight: 0.15
+    max_smoothing_shift_um: 1.5
+    linked_nodes_only: true

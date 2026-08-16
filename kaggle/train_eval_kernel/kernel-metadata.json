@@ -1,0 +1,18 @@
+{
+  "id": "shotafrancerat/biohub-real-train-eval-and-test-inference",
+  "title": "Biohub Real Train Eval and Test Inference",
+  "code_file": "run_training.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "competition_sources": [
+    "biohub-cell-tracking-during-development"
+  ],
+  "dataset_sources": [
+    "shotafrancerat/biohub-training-source-v1"
+  ],
+  "kernel_sources": [],
+  "model_sources": []
+}

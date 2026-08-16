@@ -1,0 +1,66 @@
+seed: 20260809
+data_root: auto
+output_dir: outputs/hyperparameter_search
+reuse_completed: true
+continue_on_error: true
+
+dataset:
+  train_count: 16
+  validation_count: 4
+  max_frames: 30
+
+training:
+  # Ten epochs gives the six candidates enough time to separate while still
+  # keeping this a local coarse search rather than a final 50-epoch training.
+  epochs: 10
+  batch_size: 4
+  num_workers: 0
+  window_size: 2
+  downsample: [1, 4, 4]
+  unet_out_channels: 32
+  unet_layers: [32, 64, 128]
+  pool_kernel_um: 5.0
+  top_k_checkpoints: 2
+
+# Explicit trials avoid an unnecessarily large Cartesian product. Each trial
+# changes one important training factor around the official baseline.
+training_trials:
+  - name: baseline_lr1e4
+    learning_rate: 0.0001
+    detection_loss_weight: 1.0
+    detection_negative_weight: 0.01
+  - name: lr3e4
+    learning_rate: 0.0003
+    detection_loss_weight: 1.0
+    detection_negative_weight: 0.01
+  - name: lr1e3
+    learning_rate: 0.001
+    detection_loss_weight: 1.0
+    detection_negative_weight: 0.01
+  - name: lr3e4_det2
+    learning_rate: 0.0003
+    detection_loss_weight: 2.0
+    detection_negative_weight: 0.01
+  - name: lr3e4_det05
+    learning_rate: 0.0003
+    detection_loss_weight: 0.5
+    detection_negative_weight: 0.01
+  - name: lr3e4_neg005
+    learning_rate: 0.0003
+    detection_loss_weight: 1.0
+    detection_negative_weight: 0.005
+
+base_inference:
+  detection_threshold: 0.98
+  edge_threshold: 0.5
+  pool_kernel_um: 3.0
+  use_ilp: false
+  inference_batch_size: 1
+
+# Applied only to the best training checkpoints.
+inference_grid:
+  detection_thresholds: [0.95, 0.97, 0.98, 0.99, 0.995]
+  edge_thresholds: [0.3, 0.5, 0.7]
+  pool_kernel_um: [3.0, 5.0]
+  compare_ilp_for_top_k: 3
+  inference_batch_size: 1
