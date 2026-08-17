@@ -141,5 +141,5 @@ def smooth_non_branching(
     # Refresh edge distances after coordinates move.
     for key, edge in list(output.edges.items()):
         distance = physical_distance(output.nodes[edge.source_id], output.nodes[edge.target_id], scale)
-        output.edges[key] = Edge(edge.source_id, edge.target_id, edge.probability, distance)
+        output.replace_edge(Edge(edge.source_id, edge.target_id, edge.probability, distance))
     return output, changed

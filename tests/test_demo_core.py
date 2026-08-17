@@ -32,3 +32,21 @@ def test_submission_contract(tmp_path) -> None:
     graph.add_node(Node(0, 0, 1, 2, 3))
     path = write_submission([graph], tmp_path / "submission.csv")
     assert validate_submission(pd.read_csv(path))["valid"]
+
+
+def test_graph_indexes_are_invalidated_after_mutation() -> None:
+    graph = TrackGraph("indexed")
+    graph.add_node(Node(0, 0, 1, 2, 3))
+    graph.add_node(Node(1, 1, 1, 2, 3))
+    assert graph.nodes_at(1)[0].node_id == 1
+    assert graph.incoming(1) == []
+
+    graph.add_edge(Edge(0, 1, probability=0.8))
+    assert graph.incoming(1)[0].source_id == 0
+    assert graph.outgoing(0)[0].target_id == 1
+
+    graph.remove_edge(0, 1)
+    assert graph.incoming(1) == []
+    graph.replace_node(1, t=2)
+    assert graph.nodes_at(1) == []
+    assert graph.nodes_at(2)[0].node_id == 1

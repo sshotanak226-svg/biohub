@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from scipy.spatial import cKDTree
 
 from .candidates import Candidate
 from .graph import Edge, Node, TrackGraph, physical_distance
@@ -53,13 +54,27 @@ def _candidate_subset(
     if distance_only:
         pool: list[Candidate] = []
         max_t = max((node.t for node in selected_nodes.values()), default=-1)
+        scale = np.asarray((1.625, 0.40625, 0.40625), dtype=np.float64)
         for t in range(max_t):
-            for source in output.nodes_at(t):
-                for target in output.nodes_at(t + 1):
-                    distance = physical_distance(source, target, (1.625, 0.40625, 0.40625))
-                    if distance <= max_distance_um:
-                        probability = float(np.exp(-0.5 * (distance / 3.5) ** 2))
-                        pool.append(Candidate(source.node_id, target.node_id, probability, distance))
+            sources, targets = output.nodes_at(t), output.nodes_at(t + 1)
+            if not sources or not targets:
+                continue
+            source_xyz = np.stack([node.zyx for node in sources]) * scale
+            target_xyz = np.stack([node.zyx for node in targets]) * scale
+            target_tree = cKDTree(target_xyz)
+            neighbours = target_tree.query_ball_point(source_xyz, r=max_distance_um)
+            for source_index, target_indexes in enumerate(neighbours):
+                for target_index in target_indexes:
+                    distance = float(np.linalg.norm(
+                        source_xyz[source_index] - target_xyz[target_index]
+                    ))
+                    probability = float(np.exp(-0.5 * (distance / 3.5) ** 2))
+                    pool.append(Candidate(
+                        sources[source_index].node_id,
+                        targets[target_index].node_id,
+                        probability,
+                        distance,
+                    ))
         return output, pool
 
     eligible = [

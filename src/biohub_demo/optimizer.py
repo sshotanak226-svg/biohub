@@ -78,7 +78,7 @@ def solve_forest(
         method = f"greedy-fallback:{type(exc).__name__}"
 
     output = graph.copy()
-    output.edges.clear()
+    output.clear_edges()
     for candidate in selected:
         output.add_edge(Edge(
             candidate.source_id, candidate.target_id, candidate.probability, candidate.distance_um

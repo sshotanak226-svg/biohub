@@ -56,6 +56,48 @@ Hungarian/ILP、グラフ整形、GEFF書込み、公式metric評価はCPU処理
 各系列で実際に使ったdeviceとSinkhorn時間はvariant JSONの
 `diagnostics.<dataset>.ot_device`、`gpu_accelerated`、`tensor_seconds`で確認できます。
 
+### 提案書の全53方式を比較
+
+提案書に現れる重複除外後の53方式は、次でregistryと実行要件を確認できます。
+
+```powershell
+.\scripts\run_all_proposal_methods.ps1 -DryRun
+```
+
+標準では `scripts/run_local_method_search.ps1` が作成した
+`outputs/method_search/training/training.complete.json` を読み、そこに記録された
+checkpointを固定して使います。実体のSHA-256もmarkerの記録値と照合します。
+そのcheckpointと共有raw cacheだけで実行可能な43方式を、固定20系列の
+公式metricで比較するには次を実行します。
+
+```powershell
+.\scripts\run_all_proposal_methods.ps1
+```
+
+結果は次に保存されます。
+
+```text
+outputs\proposal_all_methods\proposal_method_manifest.json
+outputs\proposal_all_methods\proposal_search_results.json
+outputs\proposal_all_methods\proposal_scoreboard.csv
+outputs\proposal_all_methods\best_proposal_method.json
+outputs\proposal_all_methods\variants\
+```
+
+全方式には`exact`、`proxy`、`requires_training`の実装忠実度を記録します。
+研究案を現在のraw出力で粗く検証する方式は`proxy`であり、原論文の完全再現とは
+区別されます。追加学習が必要な10方式は、別方式のスコアで代用しません。
+追加学習時も既存checkpointを初期値にし、可能ならbackboneを凍結してhead/router
+だけを学習するか、既存raw predictionを直接使います。各方式の再利用方針は
+dry-run、manifest、scoreboardの`checkpoint_reuse`で確認できます。
+[proposal_all_methods.yaml](configs/proposal_all_methods.yaml) の
+`external_prediction_dirs`へ各方式の20個のGEFF predictionを設定すると、同じ
+公式metric比較へ合流します。10方式すべての入力を必須にする場合は次です。
+
+```powershell
+.\scripts\run_all_proposal_methods.ps1 -StrictAllMethods
+```
+
 既存checkpointだけでtracking方式を先に比較する場合は、学習を省略できます。
 
 ```powershell

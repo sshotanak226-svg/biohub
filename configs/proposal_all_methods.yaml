@@ -1,0 +1,40 @@
+# Full registry benchmark for every unique method in
+# OPTIMAL_TRANSPORT_MATCHING_PROPOSAL.md.
+base_config: configs/local_method_search.yaml
+output_dir: outputs/proposal_all_methods
+
+# By default every comparison starts from the checkpoint produced by
+# scripts/run_local_method_search.ps1.  The recorded SHA-256 is checked before
+# inference, and the matching raw .npz predictions are reused (missing entries
+# alone are generated).
+checkpoint_reuse:
+  policy: prefer_local_method_search
+  training_marker: outputs/method_search/training/training.complete.json
+  verify_recorded_sha256: true
+  raw_cache: reuse_or_fill_missing
+
+# These methods need an additional learned component.  Their implementation
+# contract is to reuse the local-method-search checkpoint/features/predictions;
+# they must not silently train a new backbone from scratch.
+additional_training:
+  initialize_from_local_checkpoint: true
+  freeze_backbone_when_possible: true
+  reuse_raw_predictions_when_possible: true
+
+# false: execute the 43 methods supported by the current shared raw cache and
+# report the remaining 10 as requires_training.
+# true: fail before the long benchmark unless all ten external directories below
+# contain a complete <dataset>.geff for every one of the fixed 20 holdout movies.
+strict_all_methods: false
+
+external_prediction_dirs:
+  ot_localization_loss: null
+  ot_triplet_edge_embedding: null
+  multi_seed_probability_ensemble: null
+  checkpoint_tracker_cross_ensemble: null
+  family_conditioned_mixture_of_experts: null
+  stacked_edge_meta_model: null
+  annotation_propensity_pruning: null
+  per_sequence_policy_router: null
+  sparse_gt_positive_unlabeled: null
+  four_test_movie_specialist_router: null

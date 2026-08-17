@@ -136,6 +136,53 @@ def _assignment_pairs(score: np.ndarray, allowed: np.ndarray) -> set[tuple[int, 
     return {(int(i), int(j)) for i, j in zip(rows, cols) if allowed[i, j]}
 
 
+def _mutual_top_pairs(score: np.ndarray, allowed: np.ndarray, second_pass: bool) -> set[tuple[int, int]]:
+    """Return mutual row/column maxima, optionally filling orphans by assignment."""
+    if score.size == 0 or not allowed.any():
+        return set()
+    masked = np.where(allowed, score, -np.inf)
+    row_best = np.argmax(masked, axis=1)
+    col_best = np.argmax(masked, axis=0)
+    pairs = {
+        (i, int(j)) for i, j in enumerate(row_best)
+        if allowed[i, j] and col_best[j] == i
+    }
+    if not second_pass:
+        return pairs
+    used_rows = {i for i, _ in pairs}
+    used_cols = {j for _, j in pairs}
+    remaining_rows = [i for i in range(score.shape[0]) if i not in used_rows]
+    remaining_cols = [j for j in range(score.shape[1]) if j not in used_cols]
+    if remaining_rows and remaining_cols:
+        sub_allowed = allowed[np.ix_(remaining_rows, remaining_cols)]
+        sub_score = score[np.ix_(remaining_rows, remaining_cols)]
+        pairs.update(
+            (remaining_rows[i], remaining_cols[j])
+            for i, j in _assignment_pairs(sub_score, sub_allowed)
+        )
+    return pairs
+
+
+def _partial_mass_mask(plan: torch.Tensor, allowed: torch.Tensor, fraction: float) -> torch.Tensor:
+    """Keep the highest-mass entries until the requested transported mass is covered."""
+    if not 0 < fraction <= 1:
+        raise ValueError("partial_mass_fraction must be in (0, 1]")
+    flat = plan.masked_fill(~allowed, 0).flatten()
+    positive = flat > 0
+    if not bool(positive.any()):
+        return torch.zeros_like(allowed)
+    indices = torch.nonzero(positive, as_tuple=False).flatten()
+    values = flat[indices]
+    order = torch.argsort(values, descending=True)
+    ordered_values = values[order]
+    cutoff = fraction * ordered_values.sum()
+    count = int(torch.searchsorted(torch.cumsum(ordered_values, dim=0), cutoff).item()) + 1
+    selected = indices[order[:count]]
+    keep = torch.zeros_like(flat, dtype=torch.bool)
+    keep[selected] = True
+    return keep.reshape_as(allowed)
+
+
 def _frame_transport(
     sources: list[Node],
     targets: list[Node],
@@ -199,19 +246,60 @@ def _frame_transport(
     )
     if use_transformer:
         cost = cost + float(settings.get("transformer_weight", 1.0)) * probability_term
+    structure_weight = float(settings.get("structure_weight", 0.0))
+    if structure_weight > 0 and len(sources) > 1 and len(targets) > 1:
+        # A cheap fused-GW proxy: compare each node's local k-NN distance
+        # signature.  It retains the GPU-friendly pairwise matrix form while
+        # adding within-frame neighbourhood structure to the cross-frame cost.
+        k_source = min(int(settings.get("structure_neighbors", 5)) + 1, len(sources))
+        k_target = min(int(settings.get("structure_neighbors", 5)) + 1, len(targets))
+        source_local = torch.cdist(source_xyz * voxel_scale, source_xyz * voxel_scale)
+        target_local = torch.cdist(target_xyz * voxel_scale, target_xyz * voxel_scale)
+        source_signature = torch.topk(source_local, k_source, largest=False, dim=1).values[:, 1:].mean(dim=1)
+        target_signature = torch.topk(target_local, k_target, largest=False, dim=1).values[:, 1:].mean(dim=1)
+        structure_term = torch.abs(
+            source_signature.unsqueeze(1) - target_signature.unsqueeze(0)
+        ) / max(max_distance, 1e-6)
+        if bool(settings.get("normalize_costs", True)):
+            structure_term = _robust_scale(structure_term, allowed)
+        cost = cost + structure_weight * structure_term
     cost = cost.masked_fill(~allowed, 0.0)
 
-    plan, completed, residual = _log_unbalanced_sinkhorn(
-        cost,
-        allowed,
-        source_confidence,
-        target_confidence,
-        epsilon=float(settings.get("entropy_epsilon", 0.05)),
-        source_penalty=float(settings.get("source_mass_penalty", 0.5)),
-        target_penalty=float(settings.get("target_mass_penalty", 0.5)),
-        iterations=int(settings.get("sinkhorn_iterations", 100)),
-        tolerance=float(settings.get("sinkhorn_tolerance", 1e-4)),
-    )
+    sinkhorn_kwargs = {
+        "epsilon": float(settings.get("entropy_epsilon", 0.05)),
+        "source_penalty": float(settings.get("source_mass_penalty", 0.5)),
+        "target_penalty": float(settings.get("target_mass_penalty", 0.5)),
+        "iterations": int(settings.get("sinkhorn_iterations", 100)),
+        "tolerance": float(settings.get("sinkhorn_tolerance", 1e-4)),
+    }
+    mesh_rounds = max(1, int(settings.get("mesh_rounds", 1)))
+    working_cost = cost
+    plan = torch.zeros_like(cost)
+    completed = 0
+    residual = 0.0
+    for mesh_round in range(mesh_rounds):
+        plan, round_completed, residual = _log_unbalanced_sinkhorn(
+            working_cost, allowed, source_confidence, target_confidence, **sinkhorn_kwargs
+        )
+        completed += round_completed
+        if mesh_round + 1 < mesh_rounds:
+            concentration = -torch.log(plan.clamp_min(1e-8))
+            concentration = _robust_scale(concentration, allowed)
+            working_cost = cost + float(settings.get("mesh_strength", 0.15)) * concentration
+
+    cycle_weight = float(settings.get("cycle_weight", 0.0))
+    if cycle_weight > 0:
+        reverse, reverse_completed, _ = _log_unbalanced_sinkhorn(
+            cost.T, allowed.T, target_confidence, source_confidence,
+            epsilon=sinkhorn_kwargs["epsilon"],
+            source_penalty=sinkhorn_kwargs["target_penalty"],
+            target_penalty=sinkhorn_kwargs["source_penalty"],
+            iterations=sinkhorn_kwargs["iterations"],
+            tolerance=sinkhorn_kwargs["tolerance"],
+        )
+        completed += reverse_completed
+        geometric = torch.sqrt(plan.clamp_min(0) * reverse.T.clamp_min(0))
+        plan = (1.0 - cycle_weight) * plan + cycle_weight * geometric
     row_mass = plan.sum(dim=1).clamp_min(1e-8)
     col_mass = plan.sum(dim=0).clamp_min(1e-8)
     affinity = (plan / torch.sqrt(row_mass.unsqueeze(1) * col_mass.unsqueeze(0))).clamp(0, 1)
@@ -222,12 +310,24 @@ def _frame_transport(
         top_k_source=int(settings.get("top_k_source", 2)),
         top_k_target=int(settings.get("top_k_target", 3)),
     )
+    if settings.get("partial_mass_fraction") is not None:
+        retained_mask &= _partial_mass_mask(
+            plan, allowed, float(settings["partial_mass_fraction"])
+        )
 
     distance_cpu = distance.detach().cpu().numpy()
     affinity_cpu = affinity.detach().cpu().numpy()
     transformer_cpu = transformer.detach().cpu().numpy()
     allowed_cpu = retained_mask.detach().cpu().numpy()
-    projected_pairs = _assignment_pairs(affinity_cpu, allowed_cpu)
+    projection_mode = str(settings.get("ot_projection", "hungarian"))
+    if projection_mode == "hungarian":
+        projected_pairs = _assignment_pairs(affinity_cpu, allowed_cpu)
+    elif projection_mode == "mutual_top":
+        projected_pairs = _mutual_top_pairs(affinity_cpu, allowed_cpu, second_pass=True)
+    elif projection_mode == "mutual_only":
+        projected_pairs = _mutual_top_pairs(affinity_cpu, allowed_cpu, second_pass=False)
+    else:
+        raise ValueError(f"unknown OT projection: {projection_mode}")
     vote_counts: dict[tuple[int, int], int] = defaultdict(int)
     if consensus:
         for pair in projected_pairs:
@@ -277,6 +377,7 @@ def _frame_transport(
         "sinkhorn_iterations": completed,
         "sinkhorn_residual": residual,
         "transport_entropy": entropy,
+        "projection_mode": projection_mode,
     })
 
 
@@ -330,7 +431,7 @@ def solve_ot_tracking(
         )
     else:
         result = graph.copy()
-        result.edges.clear()
+        result.clear_edges()
         for item in projected:
             result.add_edge(Edge(
                 item.source_id, item.target_id, item.probability, item.distance_um

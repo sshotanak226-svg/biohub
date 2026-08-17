@@ -1723,3 +1723,58 @@ p>\frac{T}{D+1+T}
 - Paweł Teisseyre, Timo Martens, Jessa Bekker, Jesse Davis, “Learning from Biased Positive-Unlabeled Data via Threshold Calibration,” AISTATS 2025. <https://proceedings.mlr.press/v258/teisseyre25a.html>
 - Kaggle, “Biohub Cell Tracking During Development — Evaluation.” <https://www.kaggle.com/competitions/biohub-cell-tracking-during-development/overview/evaluation>
 - Royer Lab, “Kaggle Cell Tracking Competition — Official Baseline and Metric Implementation.” <https://github.com/royerlab/kaggle-cell-tracking-competition>
+
+## 36. 全方式比較コードの実装状態
+
+本書に見出しとして記載された方式名を重複除外すると53方式である。比較コードは
+`src/biohub_demo/proposal_registry.py`を唯一のregistryとし、方式名が本書の集合と
+完全一致することをtestで検証する。
+
+実装忠実度は次の3段階で結果へ必ず記録する。
+
+- `exact`：本repositoryで比較対象として定義したアルゴリズムを実装済み
+- `proxy`：研究案の主要因子を現在のraw prediction上で切り分ける実行可能な粗比較
+- `requires_training`：新checkpoint、複数seed raw cache、OOF meta-model等がなければ方式を構成できない
+
+標準の単一checkpointは `scripts/run_local_method_search.ps1` が生成する
+`outputs/method_search/training/training.complete.json` から取得する。比較開始時に
+checkpoint実体のSHA-256とmarker記録値を照合し、checkpoint SHAとraw推論設定が一致する
+共有raw `.npz`を再利用する。不足している系列だけを同じcheckpointで推論する。
+
+このcheckpointと共有raw `.npz`だけで43方式を実行できる。残る次の10方式は
+別方式の値で代用せず、必要な学習predictionを明示的に要求する。
+
+1. `ot_localization_loss`
+2. `ot_triplet_edge_embedding`
+3. `multi_seed_probability_ensemble`
+4. `checkpoint_tracker_cross_ensemble`
+5. `family_conditioned_mixture_of_experts`
+6. `stacked_edge_meta_model`
+7. `annotation_propensity_pruning`
+8. `per_sequence_policy_router`
+9. `sparse_gt_positive_unlabeled`
+10. `four_test_movie_specialist_router`
+
+追加学習を要する方式でも、U-Net/Transformer backboneをゼロから再学習することを
+標準にはしない。OT loss/nnPUは既存checkpointからfine-tuneし、embedding/propensityは
+backboneを可能な限り凍結してheadを学習する。MoE/meta-model/policy routerは既存raw
+predictionまたは43方式の出力を入力として軽量部分だけを学習する。multi-seedおよび
+cross-checkpoint ensembleでは既存checkpointを必ず一つのmemberとして残す。各方式の
+契約はmanifestの`checkpoint_reuse`へ記録する。
+
+`configs/proposal_all_methods.yaml`の`external_prediction_dirs`へ、各方式について固定
+20 holdout系列の完全なGEFF出力を指定すれば、43方式と同じ公式metricで評価される。
+`strict_all_methods: true`では10方式の入力が一つでも不足している場合、長時間処理の
+開始前にfail-fastする。
+
+実行コマンド：
+
+```powershell
+.\scripts\run_all_proposal_methods.ps1 -DryRun
+.\scripts\run_all_proposal_methods.ps1
+.\scripts\run_all_proposal_methods.ps1 -StrictAllMethods
+```
+
+43方式の通常実行でも、結果manifestには53方式すべてが出力される。実行不能な方式は
+`status: requires_training`、必要成果物は`requirements`へ記録されるため、未実行方式が
+ランキングから黙って消えることはない。
