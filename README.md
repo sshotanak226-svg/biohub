@@ -295,3 +295,25 @@ uv run python kaggle_inference.py --check-config
 ```
 
 Kaggleのテスト正解ラベルは配布されていません。ローカル評価は`train/*.geff`、提出生成は`test/*.zarr`を使用します。
+
+## 論文ベース20手法のローカル比較
+
+現在最良の`uot_mutual_top`を基準に、HOCT、Trackastra、確率校正flow、
+mitosis-aware MHT、Ultrack、GNN、EmbedTrackなど20件の論文着想を同じ
+checkpoint・raw prediction・固定保持系列で粗比較できます。
+
+```powershell
+# 学習・推論せず20手法の定義を確認
+.\scripts\run_literature_20_methods.ps1 -DryRun
+
+# 3系列で暫定スクリーニング
+.\scripts\run_literature_20_methods.ps1 -Quick
+
+# 固定20系列で正式なローカル比較
+.\scripts\run_literature_20_methods.ps1
+```
+
+20件は論文の完全再実装ではなく、このPCで先に方向性を比較する
+`screening_proxy`です。勝ったproxyだけを次段階で論文どおりに再学習します。
+詳細、出力先、個別手法の実行方法は
+[LITERATURE_20_METHODS.md](LITERATURE_20_METHODS.md)を参照してください。

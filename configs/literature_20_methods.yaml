@@ -1,0 +1,32 @@
+# Executable coarse screen of the twenty literature-backed ideas documented in
+# LITERATURE_20_METHODS.md. All candidates reuse one checkpoint and raw cache.
+base_config: configs/local_method_search.yaml
+output_dir: outputs/literature_20_methods
+
+checkpoint_reuse:
+  policy: prefer_local_method_search
+  training_marker: outputs/method_search/training/training.complete.json
+  verify_recorded_sha256: true
+  raw_cache: reuse_or_fill_missing
+
+methods:
+  - hoct_edge_attention_proxy
+  - trackastra_window_proxy
+  - calibrated_probabilistic_flow_proxy
+  - mitosis_mht_uncertainty_proxy
+  - ultrack_multi_hypothesis_proxy
+  - seven_frame_4d_motion_proxy
+  - full_sequence_gnn_proxy
+  - embedtrack_offset_proxy
+  - adaptive_distance_map_proxy
+  - neighbor_distance_graph_relink_proxy
+  - stardist3d_uot_consensus_proxy
+  - nnunet_deep_supervision_proxy
+  - swin_unetr_context_proxy
+  - self_supervised_3d_context_proxy
+  - cellpose_finetune_consensus_proxy
+  - cell_tractr_query_split_proxy
+  - four_frame_division_detector_proxy
+  - conservation_tracking_ilp_proxy
+  - focal_hard_negative_proxy
+  - deep_ensemble_tta_consensus_proxy

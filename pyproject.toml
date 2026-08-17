@@ -45,6 +45,7 @@ biohub-local-search = "biohub_demo.tune:main"
 biohub-hyper-search = "biohub_demo.hyper_search:main"
 biohub-method-search = "biohub_demo.method_search:main"
 biohub-proposal-search = "biohub_demo.proposal_search:main"
+biohub-literature-search = "biohub_demo.literature_search:main"
 
 [build-system]
 requires = ["hatchling"]
